@@ -1,0 +1,147 @@
+# -*- coding: utf-8 -*-
+"""Step 1: generate the sequence files and the hypergraph H from the raw data (run once).
+
+1. Download the raw data (see README.md) and place the files in data/raw/ (subfolders are fine).
+2. Adjust the file names in the settings below if necessary; set an entry to None to skip a dataset.
+3. Run the script. For every dataset it
+     - writes data/processed/<name>/<name>_train.txt and _test.txt (blocks of 4 lines: length / question ids /
+       concept ids / responses; with timestamps 5 lines, the 5th in seconds) and data/processed/H/<name>.csv
+       (incidence matrix with 2Q rows and 2C columns: every concept has a correct-response and an
+       incorrect-response hyperedge), together with the id mappings and the dataset statistics;
+     - writes configs/datasets/<name>.yaml pointing to the new files (the dataset-specific settings of
+       Table 2 are added by step3_tune.py; the tuned versions are included in this repository);
+     - checks that the question ids and concept ids in the sequence files agree with H.
+
+Raw files:
+  ASSISTments2009  skill_builder_data.csv (skill-builder data)
+  Statics2011      AllData_student_step_2011F.csv (student-step export of PSLC DataShop dataset 507)
+  KDDCup2010       algebra_2005_2006_train.txt (Algebra I 2005-2006, KDD Cup 2010 development data)
+ASSISTments2017 is used in an already preprocessed form (see README.md) and is not processed here.
+"""
+import os
+import shutil
+import sys
+
+import yaml
+
+def _project_root():
+    """The MAGKT folder (contains configs/ and magkt/), found from this file's location."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(5):
+        if os.path.isdir(os.path.join(d, "configs")) and os.path.isdir(os.path.join(d, "magkt")):
+            return d
+        d = os.path.dirname(d)
+    raise RuntimeError("Project root not found: place this file in the MAGKT folder (next to configs/ and magkt/)")
+
+
+ROOT = _project_root()
+sys.path.insert(0, ROOT)
+
+from magkt import preprocess as P  # noqa: E402
+
+# ============================ settings ============================
+RAW_DIR = os.path.join(ROOT, "data", "raw")
+# file names; the files are searched for in data/raw and its subfolders
+RAW = {
+    "assist2009": "skill_builder_data.csv",
+    "static2011": "AllData_student_step_2011F.csv",
+    "kddcup2010": "algebra_2005_2006_train.txt",
+}
+KDD_GRANULARITY = "problem"          # "problem": question = Problem Name | "problem_step": Problem Name + Step Name
+STATICS_GRANULARITY = "problem_step"  # question = Problem Name + Step Name
+STATICS_MISSING_KC = "keep"           # "keep": steps without a concept are kept as questions without concepts
+                                      # "drop": such steps are removed
+KDD_MISSING_KC = "drop"               # steps without a knowledge component are removed
+TEST_RATIO = 0.2                      # share of learners in the test set
+SPLIT_SEED = 42
+MIN_LEN = 3                           # learners with fewer interactions are removed
+OUT_DIR = os.path.join(ROOT, "data", "processed")
+# ================================================================
+
+
+def locate(fname):
+    """Return the path of fname inside RAW_DIR (searched recursively), or None."""
+    if not fname:
+        return None
+    if os.path.isabs(fname) and os.path.exists(fname):
+        return fname
+    direct = os.path.join(RAW_DIR, fname)
+    if os.path.exists(direct):
+        return direct
+    for base in (RAW_DIR, ROOT):          # data/raw first, then the whole project folder
+        for dirpath, dirs, files in os.walk(base):
+            dirs[:] = [x for x in dirs if x not in ("results", "processed", ".git", "__pycache__")]
+            for f in files:
+                if f.lower() == os.path.basename(fname).lower():
+                    found = os.path.join(dirpath, f)
+                    if base == ROOT:
+                        print(f"[note] {fname} found at {found} (outside data/raw)")
+                    return found
+    return None
+
+
+def write_config(name, stats):
+    cfg_dir = os.path.join(ROOT, "configs", "datasets")
+    path = os.path.join(cfg_dir, f"{name}.yaml")
+    if os.path.exists(path):
+        os.makedirs(os.path.join(cfg_dir, "_backup"), exist_ok=True)
+        shutil.copy(path, os.path.join(cfg_dir, "_backup", f"{name}.yaml"))
+    has_t = stats["has_timestamps"]
+    cfg = {"data": {
+        "root": "data/processed",
+        "name": name,
+        "train_file": f"{name}/{name}_train.txt",
+        "test_file": f"{name}/{name}_test.txt",
+        "hypergraph_file": f"H/{name}.csv",
+        "num_questions": stats["questions"],
+        "n_lines": 5 if has_t else 4,
+        "q_line": 1,
+        "a_line": 3,
+        "t_line": 4 if has_t else None,
+        "c_line": 2,
+        "qid_offset": 1,
+        "invalid_qid": "error",
+    }}
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"# generated by step1_prepare_data.py (previous version: configs/datasets/_backup/{name}.yaml)\n")
+        f.write(f"# C = {stats['concepts']} concepts; H has 2Q x 2C = {2 * stats['questions']} x {2 * stats['concepts']} entries\n")
+        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+    print(f"[{name}] configuration written: {path}")
+
+
+if __name__ == "__main__":
+    from magkt.checks import check_concept_line, h_column_blocks
+
+    common = dict(test_ratio=TEST_RATIO, split_seed=SPLIT_SEED, min_len=MIN_LEN)
+    jobs = {
+        "assist2009": lambda p: P.prep_assist2009(p, OUT_DIR, **common),
+        "static2011": lambda p: P.prep_statics2011(p, OUT_DIR, granularity=STATICS_GRANULARITY,
+                                                missing_kc=STATICS_MISSING_KC, **common),
+        "kddcup2010": lambda p: P.prep_kddcup2010(p, OUT_DIR, granularity=KDD_GRANULARITY,
+                                                missing_kc=KDD_MISSING_KC, **common),
+    }
+    done = []
+    for name, fname in RAW.items():
+        if not fname:
+            continue
+        path = locate(fname)
+        if path is None:
+            print(f"[{name}] {fname} not found in {RAW_DIR}, skipped. Files in data/raw:")
+            for dirpath, _, files in os.walk(RAW_DIR):
+                for f in files:
+                    print("    ", os.path.join(dirpath, f))
+            continue
+        print("\n" + "=" * 70 + f"\nprocessing {name}: {path}\n" + "=" * 70)
+        stats = jobs[name](path)
+        write_config(name, stats)
+        done.append(name)
+
+    print("\n" + "=" * 70 + "\nchecking the generated data\n" + "=" * 70)
+    for name in done:
+        h_column_blocks(name)
+        check_concept_line(name)
+    if done:
+        print("\nDone. Every dataset should report that the incorrect-response rows are the correct-response rows "
+              "shifted by C columns, and pass the concept check.")
+    else:
+        print("No dataset processed: set the raw file names in the settings.")

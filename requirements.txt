@@ -1,0 +1,11 @@
+# Python 3.10
+# PyTorch: install the build that matches your CUDA driver first (the experiments used CUDA 12.6), see
+# https://pytorch.org/get-started/locally/ , e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+# then: pip install -r requirements.txt
+torch
+numpy
+scipy
+pandas
+scikit-learn
+pyyaml

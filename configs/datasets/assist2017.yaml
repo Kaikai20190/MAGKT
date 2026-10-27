@@ -1,0 +1,22 @@
+# ASSISTments2017 in its publicly available preprocessed form (see README.md); no timestamps
+# model/train/max_len: selected on the validation learners by step3_tune.py
+data:
+  name: assist2017
+  train_file: assist2017/assist2017_train.csv
+  test_file: assist2017/assist2017_test.csv
+  hypergraph_file: H/2017.csv
+  num_questions: 3162
+  n_lines: 4
+  q_line: 1
+  a_line: 3
+  t_line: null
+  c_line: 2
+  max_len: 200
+model:
+  kc_input: true
+  kc_head: true
+  head_type: mlp
+  input_dropout: 0.2
+train:
+  weight_decay: 1.0e-05
+  lr_plateau: true

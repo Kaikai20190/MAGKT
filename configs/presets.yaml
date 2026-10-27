@@ -1,0 +1,30 @@
+# Model variants. Each preset is a set of dotted overrides on top of configs/default.yaml and
+# configs/datasets/<dataset>.yaml.
+#
+# full: MAGKT as reported in the paper (retrieval memory with success / failure activations, see magkt/memory.py).
+
+full: {}
+
+# ---- branches, fusion and ensemble (Table 5, group 1) ----
+no_memory:        {model.use_memory: false}                                  # without the memory branch
+no_static:        {model.use_static: false}                                  # without the structural branch
+fusion_only:      {model.head_mode: fusion, train.loss_mode: final}          # single prediction path, its own loss only
+ensemble_loss_only:   {train.loss_mode: final}                               # loss on the averaged prediction only
+no_cross_gate:    {model.cross_gate: false}                                  # equal-weight fusion
+legacy_struct:    {graph.hyper_norm: legacy, model.struct_encoder: legacy}   # aggregation-only structural encoder
+
+# ---- memory components (Table 5, group 2) ----
+no_individual:    {memory.individual: false, memory.recall_head: false}      # shared, history-free memory (NI)
+no_answer:        {memory.answer_aware: false}       # memory content without the response embedding
+no_forgetting:    {memory.forgetting: false}         # all decay rates d_k, d = 0
+fixed_d:          {memory.learn_d: false}            # decay rates fixed at their initial values
+indiv_d:          {memory.indiv_d: true}             # decay rates conditioned on the learner's history
+no_spreading:     {memory.spreading: false}          # w = 0 (no transition prior)
+no_prior:         {memory.retrieval_prior: false}    # no associative prior (u = w = 0)
+no_recall:        {memory.recall_head: false}        # no recall term
+recall_unsplit:   {memory.recall_split: false}       # recall term with a single activation (no success / failure split)
+
+# ---- structure and time (Table 5, group 3) ----
+graph_identity:   {graph.transition_source: identity}                        # no transition edges
+graph_concept:    {graph.transition_source: concept}                         # concept-based graph instead of transitions
+time_decay:       {memory.decay_time: time, memory.time_scale: 60.0}         # lag in minutes (needs data.t_line)

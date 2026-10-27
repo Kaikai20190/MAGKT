@@ -1,0 +1,87 @@
+# Default settings shared by all datasets. Dataset files in configs/datasets/
+# override the `data` block; presets in configs/presets.yaml switch variants.
+
+data:
+  root: data                 # all paths below are relative to this folder
+  name: null
+  train_file: null
+  test_file: null
+  hypergraph_file: null      # incidence matrix H, shape (2Q, M), no header
+  num_questions: null        # Q (H must have 2Q rows)
+  n_lines: 3                 # lines per learner block in the raw file
+  q_line: 1                  # index (in block) of the question-id line
+  a_line: 2                  # index of the response line
+  t_line: null               # index of a timestamp line (seconds); null = none
+  c_line: null               # index of a per-interaction concept line (1-based ids, 0 = none); null = none
+  num_concepts: null         # filled in automatically from the data
+  qid_offset: 1              # raw question ids are 1-based (0 if they start at 0)
+  invalid_qid: error         # error | drop: what to do with ids outside [0, Q) after the offset
+  max_len: 50                # sequences are cut into non-overlapping windows
+  val_ratio: 0.1             # fraction of TRAINING learners held out for validation
+  split_seed: 42             # fixed across all runs so every seed sees the same split
+
+graph:
+  transition_source: train   # train | identity | concept
+  transition_topk: auto      # auto (Q >= 2000 -> 50, 500 < Q < 2000 -> 30, otherwise no sparsification) | int | 0
+  hyper_norm: hgnn           # hgnn: Dv^-1/2 H W De^-1 H^T Dv^-1/2 | legacy: without De^-1 (aggregation-only ablation)
+
+model:
+  emb_dim: 256
+  hidden_dim: 128
+  lstm_layers: 1
+  struct_encoder: sage       # sage: [Z || mean-agg(Z)] keeps every node distinct | legacy: aggregation only (ablation)
+  struct_dropout: 0.1
+  use_static: true
+  use_memory: true
+  cross_gate: true
+  head_mode: ensemble        # ensemble: mean of 3 path logits | fusion: fusion path only
+  kc_input: false            # add concept-response embedding of (c_t, r_t) to the inputs (needs data.c_line)
+  kc_head: false             # add concept term of c_{t+1} to the prediction head (needs data.c_line)
+  input_dropout: 0.0         # dropout on branch inputs before the LSTM
+  head_type: dot             # dot: per-question output | mlp: MLP([O_t ; structural representation of q_{t+1}]) | rasch: concept output + 2 scalars per question (not used in the reported experiments)
+  head_dropout: 0.2          # dropout inside the mlp head
+  id_dropout: 0.0            # drop whole question/node ID embeddings during training (rely on shared info)
+
+memory:
+  individual: true           # false -> shared, history-free memory (ablation no_individual)
+  answer_aware: true         # memory content includes response embedding
+  forgetting: true           # false -> all decay rates = 0
+  learn_d: true              # false -> decay rates fixed at their initial values
+  d_init: 0.5                # initial decay rate d of the success / failure activations
+  spreading: true            # false -> w = 0 (no transition prior)
+  learn_w: true
+  w_init: 1.0                # initial weight w of the transition prior
+  act_gate: true             # activation layer only: activation gate g = sigmoid(w_g * A + b_g)
+  gate_monotone: false       # activation layer only: w_g = softplus(.) >= 0
+  decay_time: step           # step: lag in interactions | time: lag in elapsed time / time_scale
+  time_scale: 3600.0         # seconds per unit when decay_time = time (preset time_decay: 60, i.e. minutes)
+  dropout: 0.2
+  eps: 1.0e-6
+  target: current            # activation layer only: current (question just answered) | next (q_{t+1})
+  output: legacy             # activation layer only: legacy: LN(g * c) | residual: LN(v_t) + g * LN(c)
+  act_offset: null           # activation layer only: A = ln(act_offset + sum ...); null = eps
+  act_head: false            # activation layer only: add beta * A_t to the logits (needs target: next)
+  type: retrieval            # retrieval (MAGKT) | activation (alternative layer)
+  heads: 4                   # retrieval: number of heads (each with its own decay rate d_h)
+  retrieval_prior: true      # retrieval: add ln(1 + u*same chunk + w*S) to the attention logits
+  indiv_d: false             # retrieval: learner/stage-specific decay rates d_{h,t}
+  recall_head: true          # recall term in the logits (needs type retrieval)
+  recall_split: true         # recall term = gamma_c A+ + rho_c A- - tau_c (success / failure activations, per concept)
+  chunk: question            # activation layer only: question | concept
+  history: 0                 # >0: also use the H interactions before the current window as memory history (0 in all experiments)
+
+train:
+  batch_size: 128
+  lr: 0.001
+  weight_decay: 0.0
+  grad_clip: 0.0             # max gradient norm (0 = off)
+  id_weight_decay: null      # separate L2 for question-specific parameters (null = same as weight_decay)
+  lr_plateau: false          # halve the learning rate when validation AUC stops improving
+  plateau_patience: 2
+  epochs: 100
+  patience: 10               # early stopping on validation AUC
+  loss_mode: multi           # multi: mean BCE over (h, d, f, final) | final: final output only
+  device: auto
+  num_workers: 0
+
+seed: 0
